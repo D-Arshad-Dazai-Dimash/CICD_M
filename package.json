@@ -1,5 +1,10 @@
 {
-  "dependencies": {
-    "express": "^4.21.2"
-  }
+  "name": "hello-world-app",
+  "version": "1.0.0",
+  "description": "A simple Hello World web server",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {}
 }
