@@ -822,8 +822,110 @@ jobs:
 
 
 
+---
 
+### **1. Create `ci.yml` for CI**
 
+This workflow will handle the build and push of the Docker image to DockerHub.
 
+```yaml
+name: CI Pipeline
 
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build Docker image
+      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/midterm:latest .
+
+    - name: Push Docker image to DockerHub
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+```
+
+---
+
+### **2. Create `cd.yml` for CD**
+
+This workflow will deploy the Docker image to the EC2 instances. It will trigger only after the `ci.yml` workflow completes successfully.
+
+#### Trigger Deployment Manually or Automatically
+To trigger this workflow:
+- Use the `workflow_run` event to start this workflow after `ci.yml`.
+- Alternatively, use a manual dispatch (if desired).
+
+Here’s the deployment workflow (`cd.yml`):
+
+```yaml
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows:
+      - CI Pipeline
+    types:
+      - completed
+
+jobs:
+  deploy-1:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Deploy to EC2-1
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_KEY }}" > ~/.ssh/midterm
+        chmod 600 ~/.ssh/midterm
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_1_IP> << EOF
+        sudo docker stop midterm || true
+        sudo docker rm midterm || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        sudo docker run -d --name midterm -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        EOF
+
+  deploy-2:
+    runs-on: ubuntu-latest
+    needs: deploy-1
+    steps:
+    - name: Deploy to EC2-2
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_SECOND }}" > ~/.ssh/midterm
+        chmod 600 ~/.ssh/midterm
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_2_IP> << EOF
+        sudo docker stop midterm || true
+        sudo docker rm midterm || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        sudo docker run -d --name midterm -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        EOF
+```
+
+---
+
+### Key Points:
+1. **Workflow Dependencies**:
+   - `ci.yml` builds the image and pushes it to DockerHub.
+   - `cd.yml` triggers after `ci.yml` completes using `workflow_run`.
+
+2. **Separate Workflows**:
+   - Each workflow has a specific role, keeping your CI/CD pipeline clean and modular.
+
+3. **Manual Trigger (Optional)**:
+   - Add a manual dispatch option for `cd.yml` if automatic deployment is not required:
+     ```yaml
+     on:
+       workflow_dispatch:
+     ```
 
