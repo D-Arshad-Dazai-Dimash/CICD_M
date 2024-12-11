@@ -122,6 +122,16 @@ jobs:
 
 
 
+
+
+
+
+
+
+
+
+
+
 on:
   push:
     branches:
@@ -184,3 +194,187 @@ jobs:
   
     - name: successful completion
       run: echo "Deployment to EC2 complete."
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+      Ваша задача включает использование CI/CD пайплайна с Docker, GitHub Actions и AWS. Вот пошаговое руководство:
+
+---
+
+### 1. **Подготовка AWS EC2 инстансов**
+
+1. **Создайте два EC2 инстанса**:
+   - Тип инстанса: `t2.micro` (для тестов подойдет).
+   - Операционная система: Ubuntu (рекомендуется 20.04 или 22.04).
+   - Скачайте приватный ключ (PEM-файл).
+
+2. **Настройте инстансы**:
+   - Убедитесь, что порты **5000** и **22** открыты в **Security Groups**.
+   - Зайдите на каждый инстанс через SSH:
+     ```bash
+     ssh -i "your-key.pem" ubuntu@<EC2_IP>
+     ```
+   - Установите Docker:
+     ```bash
+     sudo apt update
+     sudo apt install -y docker.io
+     sudo systemctl enable docker
+     sudo systemctl start docker
+     ```
+   - Дайте текущему пользователю доступ к Docker:
+     ```bash
+     sudo usermod -aG docker $USER
+     ```
+     Перезапустите сессию SSH.
+
+---
+
+### 2. **Создайте Dockerfile**
+В директории проекта создайте файл `Dockerfile`:
+```dockerfile
+FROM python:3.9-slim
+
+WORKDIR /app
+
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+
+COPY . .
+
+CMD ["python", "app.py"]
+```
+
+---
+
+### 3. **Настройка GitHub Secrets**
+
+1. **Добавьте следующие секреты в GitHub Actions**:
+   - `DOCKER_USERNAME` – ваш DockerHub логин.
+   - `DOCKER_PASSWORD` – ваш DockerHub пароль.
+   - `SSH_KEY` – содержимое PEM-файла для первого инстанса.
+   - `SSH_SECOND` – содержимое PEM-файла для второго инстанса.
+
+2. **Проверьте приватные ключи**:
+   ```bash
+   cat your-key.pem | pbcopy  # macOS
+   cat your-key.pem | xclip -sel clip  # Linux
+   ```
+
+---
+
+### 4. **Настройка Load Balancer**
+
+1. В AWS Console откройте **EC2 -> Load Balancers**.
+2. Создайте Load Balancer:
+   - Тип: Application Load Balancer.
+   - Укажите оба EC2 инстанса в **Target Group**.
+   - Настройте Listener на порт 5000.
+3. Запишите DNS-имя вашего Load Balancer для дальнейшего использования.
+
+---
+
+### 5. **GitHub Actions Workflow**
+
+#### Объяснение шагов вашего YAML:
+- **`build`**: Строит Docker-образ и пушит его на DockerHub.
+- **`deploy-1` и `deploy-2`**: Деплоят образ на два EC2 инстанса через SSH.
+
+Используем ваш YAML, слегка скорректированный:
+```yaml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build Docker image
+      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/midterm:latest .
+
+    - name: Push Docker image to DockerHub
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+
+  deploy-1:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Deploy to EC2-1
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_KEY }}" > ~/.ssh/midterm
+        chmod 600 ~/.ssh/midterm
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_1_IP> << EOF
+        sudo docker stop midterm || true
+        sudo docker rm midterm || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        sudo docker run -d --name midterm -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        EOF
+
+  deploy-2:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+    - name: Deploy to EC2-2
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_SECOND }}" > ~/.ssh/midterm
+        chmod 600 ~/.ssh/midterm
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_2_IP> << EOF
+        sudo docker stop midterm || true
+        sudo docker rm midterm || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        sudo docker run -d --name midterm -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        EOF
+```
+
+---
+
+### 6. **Проверка**
+1. После пуша в `main` ветку:
+   - Пайплайн строит Docker-образ.
+   - Пушит образ в DockerHub.
+   - Деплоит его на два EC2 инстанса.
+2. **Тестирование**:
+   - Откройте DNS-имя Load Balancer: `http://<LOAD_BALANCER_DNS>:5000`.
+
+---
+
+Если возникнут вопросы или ошибки, дайте знать!
