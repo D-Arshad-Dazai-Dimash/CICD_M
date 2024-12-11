@@ -1015,3 +1015,230 @@ jobs:
 5. Сохраните изменения.
 
 ---
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Давайте создадим и разберем пошаговую настройку CI/CD пайплайна с использованием **Flask Template** из предоставленного репозитория. Мы реализуем сборку Docker-образа, пуш его в DockerHub, развертывание на двух EC2-инстансах через ALB (Application Load Balancer) и настройку всего инфраструктурного окружения.
+
+---
+
+### **1. Подготовка репозитория**
+
+1. **Склонируйте репозиторий на свой компьютер:**
+   ```bash
+   git clone https://github.com/amirkhan-orazbay-sdu/flask-template-endterm.git
+   cd flask-template-endterm
+   ```
+
+2. **Убедитесь, что проект имеет:**
+   - Файл `requirements.txt` с зависимостями для приложения.
+   - Файл `app.py`, содержащий Flask-приложение.
+   - Dockerfile для контейнеризации приложения.
+
+3. Если `Dockerfile` отсутствует, создайте его:
+   ```dockerfile
+   FROM python:3.9-slim
+
+   WORKDIR /app
+
+   COPY requirements.txt requirements.txt
+   RUN pip install -r requirements.txt
+
+   COPY . .
+
+   CMD ["python", "app.py"]
+   ```
+
+---
+
+### **2. Настройка DockerHub**
+
+1. Зарегистрируйтесь на [DockerHub](https://hub.docker.com/), если у вас еще нет аккаунта.
+2. Создайте репозиторий для образа:
+   - Назовите его, например, `flask-template-endterm`.
+
+---
+
+### **3. Подготовка AWS EC2**
+
+1. **Создайте 2 EC2-инстанса**:
+   - Тип инстанса: `t2.micro` (бесплатный уровень для тестирования).
+   - Операционная система: **Ubuntu 20.04** или **22.04**.
+   - Настройте порты в **Security Groups**:
+     - SSH (порт 22) для вашего IP-адреса.
+     - HTTP (порт 5000) для ALB (будет настроен позже).
+   - Скачайте приватный ключ `.pem`.
+
+2. **Установите Docker на каждом инстансе**:
+   Подключитесь к инстансам через SSH и выполните:
+   ```bash
+   sudo apt update
+   sudo apt install -y docker.io
+   sudo systemctl enable docker
+   sudo systemctl start docker
+   sudo usermod -aG docker $USER
+   ```
+
+---
+
+### **4. Создание Application Load Balancer (ALB)**
+
+1. Перейдите в **AWS Management Console → EC2 → Load Balancers → Create Load Balancer**.
+2. Выберите **Application Load Balancer**:
+   - Name: `flask-alb`.
+   - Scheme: `Internet-facing` (для публичного доступа).
+   - Listener:
+     - Protocol: HTTP.
+     - Port: `80`.
+   - Availability Zones: Выберите зоны с инстансами.
+
+3. Создайте **Target Group**:
+   - Name: `flask-target-group`.
+   - Target Type: `Instance`.
+   - Protocol: HTTP.
+   - Port: `5000`.
+   - Health Check:
+     - Path: `/` (или `/health`, если настроите маршрут для проверки).
+     - Healthy threshold: 2.
+     - Unhealthy threshold: 2.
+
+4. Зарегистрируйте оба EC2 в **Target Group**.
+
+---
+
+### **5. Настройка GitHub Secrets**
+
+1. В репозитории GitHub перейдите в **Settings → Secrets and variables → Actions → New repository secret**.
+2. Добавьте следующие секреты:
+   - `DOCKER_USERNAME`: ваш логин на DockerHub.
+   - `DOCKER_PASSWORD`: ваш пароль DockerHub.
+   - `SSH_KEY`: содержимое приватного ключа `.pem` для первого EC2.
+   - `SSH_SECOND`: содержимое приватного ключа `.pem` для второго EC2.
+
+---
+
+### **6. Настройка CI/CD Workflows**
+
+#### **`ci.yml`: Сборка и пуш Docker-образа**
+Создайте файл `.github/workflows/ci.yml`:
+```yaml
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Login to DockerHub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Build Docker image
+      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/flask-template-endterm:latest .
+
+    - name: Push Docker image to DockerHub
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/flask-template-endterm:latest
+```
+
+---
+
+#### **`cd.yml`: Деплой Docker-образа на EC2**
+Создайте файл `.github/workflows/cd.yml`:
+```yaml
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows:
+      - CI Pipeline
+    types:
+      - completed
+
+jobs:
+  deploy-1:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Deploy to EC2-1
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_KEY }}" > ~/.ssh/midterm
+        chmod 600 ~/.ssh/midterm
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_1_IP> << EOF
+        sudo docker stop flask-template || true
+        sudo docker rm flask-template || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/flask-template-endterm:latest
+        sudo docker run -d --name flask-template -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/flask-template-endterm:latest
+        EOF
+
+  deploy-2:
+    runs-on: ubuntu-latest
+    needs: deploy-1
+    steps:
+    - name: Deploy to EC2-2
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.SSH_SECOND }}" > ~/.ssh/midterm
+        chmod 600 ~/.ssh/midterm
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_2_IP> << EOF
+        sudo docker stop flask-template || true
+        sudo docker rm flask-template || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/flask-template-endterm:latest
+        sudo docker run -d --name flask-template -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/flask-template-endterm:latest
+        EOF
+```
+
+---
+
+### **7. Проверка и тестирование**
+
+1. **Пушьте код в `main`:**
+   ```bash
+   git add .
+   git commit -m "Set up CI/CD"
+   git push origin main
+   ```
+
+2. **Проверьте выполнение Workflows**:
+   - Зайдите в раздел **Actions** на GitHub.
+   - Убедитесь, что пайплайны `ci.yml` и `cd.yml` выполнены успешно.
+
+3. **Тестирование ALB**:
+   - Перейдите по адресу:
+     ```
+     http://<ALB_DNS>
+     ```
+   - Вы должны увидеть ваше Flask-приложение.
+
+---
+
+### Итог
+
+Теперь ваше приложение автоматически собирается в Docker, публикуется на DockerHub, а затем развертывается на двух EC2-инстансах через ALB. Если возникнут проблемы на любом этапе, дайте знать!
