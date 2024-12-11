@@ -152,3 +152,176 @@ This way, after deployment, you’re testing your live environment.
 
 **Conclusion:**  
 By following the above steps, you’ll have your CI/CD pipeline continuing to deploy updates directly to the EC2 instance, but now all end-user traffic will be routed through a properly configured load balancer. This provides better fault tolerance, easier scaling, and a single stable endpoint for accessing your application.
+
+
+
+
+
+
+###**Добавление Auto Scaling и Load Balancer к вашему проекту с использованием AWS включает в себя несколько шагов. Мы будем настраивать инфраструктуру, чтобы поддерживать Auto Scaling и Load Balancer для вашего Docker-сервиса, который уже развёрнут с помощью GitHub Actions.**
+
+### **Шаг 1. Настройка AWS EC2 Instances**
+
+1. **Создайте AMI (Amazon Machine Image):**
+   - Войдите на ваш EC2 сервер, где работает `cicd-m-container`.
+   - Настройте сервер с установленным Docker и настройте ваш контейнер.
+   - После этого создайте **AMI** (снимок) текущего сервера EC2. Это нужно для создания новых экземпляров в Auto Scaling группе.
+
+2. **Настройте роль для EC2:**
+   - Создайте IAM роль с доступом к Amazon EC2 и Load Balancer.
+   - Присоедините эту роль к вашим экземплярам EC2.
+
+---
+
+### **Шаг 2. Настройка Auto Scaling**
+
+1. В AWS Management Console:
+   - Перейдите в раздел **EC2 > Auto Scaling Groups**.
+   - Создайте новую Auto Scaling группу.
+     - Выберите созданную ранее AMI.
+     - Укажите количество начальных экземпляров (например, `2`).
+     - Настройте минимальное (`1`), максимальное (`4`) и желаемое (`2`) количество экземпляров.
+   - Добавьте **Health Check** для Load Balancer.
+
+2. Укажите Target Scaling Policy:
+   - Укажите, чтобы новые экземпляры создавались при превышении, например, 70% использования CPU.
+
+---
+
+### **Шаг 3. Настройка Load Balancer**
+
+1. Перейдите в **EC2 > Load Balancers**.
+   - Создайте Application Load Balancer (ALB).
+   - Укажите Target Group, которая включает экземпляры Auto Scaling группы.
+   - Настройте маршрут HTTP-трафика к порту `80`.
+
+---
+
+### **Шаг 4. Обновление CD Pipeline для Auto Scaling**
+
+Добавьте шаги для обновления всех экземпляров Auto Scaling группы при развёртывании нового образа Docker.
+
+```yaml
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+    - name: Pull Docker image
+      run: sudo docker pull dimash26/cicd_m:latest
+    - name: Update EC2 Instances
+      run: |
+        INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-instances --query 'AutoScalingInstances[].InstanceId' --output text)
+        for ID in $INSTANCE_IDS; do
+          aws ec2 reboot-instances --instance-ids $ID
+        done
+    - name: Delete Old Docker Container
+      run: sudo docker rm -f cicd-m-container || true
+    - name: Run New Docker Container
+      run: sudo docker run -d -p 80:3000 --name cicd-m-container dimash26/cicd_m
+```
+
+---
+
+### **Шаг 5. Настройка Health Checks для Load Balancer**
+
+1. В разделе **Target Groups**, настройте Health Check URL, например `/health`:
+   - Убедитесь, что ваше приложение возвращает код `200` для этого URL.
+
+---
+
+### **Шаг 6. Тестирование и Проверка**
+
+1. Убедитесь, что Load Balancer правильно распределяет трафик между экземплярами.
+2. Проверьте, что Auto Scaling добавляет новые экземпляры при нагрузке.
+
+---
+
+### **Шаг 7. Настройка для Автоматического Обновления Auto Scaling**
+
+Для автоматического обновления Auto Scaling группы при новой версии контейнера, используйте **Lifecycle Hooks**:
+- Создайте Lifecycle Hook, который завершает старые экземпляры только после успешного запуска новых.
+
+---
+
+После выполнения этих шагов ваш сервис будет поддерживать Auto Scaling и Load Balancer, обеспечивая отказоустойчивость и масштабируемость.
+
+
+###**Создание AMI (Amazon Machine Image) в AWS позволяет создать шаблон экземпляра EC2, который включает операционную систему, конфигурации и установленные приложения. Вот пошаговое руководство:**
+
+---
+
+### **Шаг 1: Подготовьте ваш EC2 экземпляр**
+
+1. **Настройте EC2 экземпляр:**
+   - Убедитесь, что на вашем экземпляре EC2 установлено всё необходимое:
+     - Docker.
+     - Настроенный Docker-контейнер (если требуется).
+     - Все зависимости, нужные для работы вашего приложения.
+
+2. **Проверьте конфигурацию:**
+   - Убедитесь, что ваш сервис работает корректно (например, контейнер Docker запущен, а сайт "Hello World" доступен).
+
+---
+
+### **Шаг 2: Создание AMI**
+
+1. **Перейдите в AWS Management Console:**
+   - Войдите в консоль AWS.
+   - Перейдите в раздел **EC2**.
+
+2. **Выберите ваш экземпляр EC2:**
+   - Найдите экземпляр EC2, который вы хотите использовать для создания AMI.
+
+3. **Создайте образ:**
+   - Выберите экземпляр, нажмите на кнопку **Actions (Действия)**.
+   - Перейдите в **Image and templates (Изображение и шаблоны)** → **Create Image (Создать образ)**.
+
+4. **Заполните параметры:**
+   - В поле **Image Name (Имя образа)** укажите понятное имя, например, `MyWebApp-Docker-AMI`.
+   - Укажите описание, чтобы знать, для чего этот образ предназначен.
+   - Вы можете оставить дополнительные параметры по умолчанию.
+
+5. **Создайте AMI:**
+   - Нажмите **Create Image (Создать образ)**.
+
+---
+
+### **Шаг 3: Мониторинг создания AMI**
+
+1. Перейдите в раздел **AMIs** в панели **Images** (в меню слева).
+2. Найдите ваш образ и убедитесь, что его статус изменился на **Available** (Доступен).
+
+---
+
+### **Шаг 4: Использование AMI**
+
+1. **Создание новых экземпляров EC2:**
+   - Выберите ваш AMI, нажмите **Launch Instance**.
+   - Создайте новый экземпляр, который будет точно таким же, как исходный.
+
+2. **Настройка Auto Scaling:**
+   - Используйте ваш AMI как базовый образ при создании Auto Scaling группы (см. предыдущие шаги).
+
+---
+
+### **Полезные советы**
+
+1. **Регулярно обновляйте AMI:**
+   - Если ваш проект активно развивается, создавайте новые версии AMI, чтобы отражать изменения в конфигурации.
+
+2. **Храните только нужные AMI:**
+   - Удаляйте старые образы, чтобы избежать лишних затрат.
+
+3. **Используйте скрипты запуска:**
+   - Для более гибкой настройки вы можете использовать **User Data** для выполнения дополнительных команд при запуске экземпляра из AMI.
+
+После создания AMI вы можете использовать её для Auto Scaling и Load Balancer, чтобы легко разворачивать ваши приложения.
