@@ -326,10 +326,10 @@ jobs:
         password: ${{ secrets.DOCKER_PASSWORD }}
 
     - name: Build Docker image
-      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/midterm:latest .
+      run: docker build -t ${{ secrets.DOCKER_USERNAME }}/cicd_m:latest .
 
     - name: Push Docker image to DockerHub
-      run: docker push ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+      run: docker push ${{ secrets.DOCKER_USERNAME }}/cicd_m:latest
 
   deploy-1:
     runs-on: ubuntu-latest
@@ -338,13 +338,13 @@ jobs:
     - name: Deploy to EC2-1
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_KEY }}" > ~/.ssh/midterm
-        chmod 600 ~/.ssh/midterm
-        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_1_IP> << EOF
-        sudo docker stop midterm || true
-        sudo docker rm midterm || true
-        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/midterm:latest
-        sudo docker run -d --name midterm -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        echo "${{ secrets.SSH_KEY }}" > ~/.ssh/cicd_m
+        chmod 600 ~/.ssh/cicd_m
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/cicd_m ubuntu@<EC2_1_IP> << EOF
+        sudo docker stop cicd_m || true
+        sudo docker rm cicd_m || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/cicd_m:latest
+        sudo docker run -d --name cicd_m -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/cicd_m:latest
         EOF
 
   deploy-2:
@@ -354,13 +354,13 @@ jobs:
     - name: Deploy to EC2-2
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.SSH_SECOND }}" > ~/.ssh/midterm
-        chmod 600 ~/.ssh/midterm
-        ssh -o StrictHostKeyChecking=no -i ~/.ssh/midterm ubuntu@<EC2_2_IP> << EOF
-        sudo docker stop midterm || true
-        sudo docker rm midterm || true
-        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/midterm:latest
-        sudo docker run -d --name midterm -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/midterm:latest
+        echo "${{ secrets.SSH_SECOND }}" > ~/.ssh/cicd_m
+        chmod 600 ~/.ssh/cicd_m
+        ssh -o StrictHostKeyChecking=no -i ~/.ssh/cicd_m ubuntu@<EC2_2_IP> << EOF
+        sudo docker stop cicd_m || true
+        sudo docker rm cicd_m || true
+        sudo docker pull ${{ secrets.DOCKER_USERNAME }}/cicd_m:latest
+        sudo docker run -d --name cicd_m -p 5000:5000 ${{ secrets.DOCKER_USERNAME }}/cicd_m:latest
         EOF
 ```
 
